@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PolyLean – Live Yes/No leans for prediction markets</title>
+<title>PolyLean – Live chances and actions for prediction markets</title>
 <meta name="description" content="Live Polymarket odds compared with independent forecasts, with a Yes, No or Skip lean, its sources and its own scorecard.">
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--ink:#14181f;--mute:#5d6675;--line:#e3e6eb;--accent:#0b6b5c;
@@ -49,8 +49,26 @@ a{color:var(--accent)}.tag{font-size:.75rem;color:var(--mute)}
 table{width:100%;border-collapse:collapse;font-size:.9rem;margin-top:12px}
 th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:top}
 .good{color:var(--yes)}.bad{color:var(--no)}
-.how h2{font-size:1.05rem;margin:20px 0 6px}
+.how-page h2{font-size:1.05rem;margin:20px 0 6px}
 .disc{margin-top:28px;padding:12px;border:1px solid var(--line);border-radius:10px;color:var(--mute);font-size:.85rem}
+.badge.Watch{background:var(--warn-bg);color:var(--warn)}
+.chance{margin:12px 0 6px}.cl{font-size:.9rem;color:var(--mute)}.cl b{font-size:1.05rem}.gy{color:var(--yes)}.rn{color:var(--no)}
+.bar{display:flex;height:10px;border-radius:6px;overflow:hidden;margin-top:6px;background:var(--skip-bg)}
+.bar .y{background:var(--yes)}.bar .n{background:var(--no)}
+.mk{margin:6px 0 0;color:var(--mute);font-size:.82rem}
+.do{margin-top:12px;border:2px solid var(--yes);border-radius:12px;padding:12px;background:var(--yes-bg)}
+.do.No{border-color:var(--no);background:var(--no-bg)}
+.do-title{margin:0 0 8px;font-weight:700;font-size:1rem}
+.rows{margin:0;display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:.92rem}
+.rows dt{color:var(--mute)}.rows dd{margin:0;font-weight:500}
+.how{margin:10px 0 0;font-size:.86rem;color:var(--mute)}.fine{margin:8px 0 0;font-size:.78rem;color:var(--mute)}
+.notrade{margin-top:12px;border:1px dashed var(--line);border-radius:12px;padding:12px;background:var(--skip-bg)}
+.notrade .do-title{margin-bottom:4px}
+.controls{display:grid;gap:12px;margin-bottom:12px;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+.ctl label{display:block;font-size:.82rem;color:var(--mute);margin-bottom:6px}
+.ctl .filters{margin:0}
+input[type=number]{width:100%;max-width:220px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);font:inherit}
+h3.sec{font-size:1rem;margin:16px 0 8px}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -59,7 +77,7 @@ th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);vertic
 <header>
   <div>
     <h1>Poly<span>Lean</span></h1>
-    <p class="sub">Live Polymarket odds vs. independent forecasts. A Yes, No or Skip lean, with sources and your own scorecard.</p>
+    <p class="sub">Live Polymarket odds vs. independent forecasts. The chance of Yes and No for each market, and a specific action only when the chance is high and the price is right.</p>
   </div>
   <button id="refresh" type="button">Refresh</button>
 </header>
@@ -73,25 +91,41 @@ th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);vertic
   <button role="tab" aria-selected="false" data-tab="how">How it works</button>
 </nav>
 
-<section id="picks"><div class="filters" id="filters"></div><p class="meta" id="meta"></p><div id="list"></div></section>
+<section id="picks">
+  <div class="controls">
+    <div class="ctl"><label>Minimum chance for an action</label><div class="filters" id="thr"></div></div>
+    <div class="ctl"><label for="bank">My bankroll in $ (optional, used only to size stakes)</label>
+      <input id="bank" type="number" min="0" step="any" inputmode="decimal" placeholder="e.g. 200"></div>
+  </div>
+  <div class="filters" id="views"></div>
+  <div class="filters" id="filters"></div>
+  <p class="meta" id="meta"></p>
+  <div id="list"></div>
+</section>
 <section id="record" hidden></section>
 
-<section id="how" class="how" hidden>
+<section id="how" class="how-page" hidden>
   <h2>What this is</h2>
-  <p>Every time this page opens (and every 10 minutes while it stays open) it fetches live prices for the most active Polymarket Yes/No markets. For each one it looks for the same question on Kalshi and Manifold, averages what they say, and moves Polymarket's price only part of the way toward that average. It then compares the result with what you would really pay: the <em>ask</em> for Yes, or the <em>bid</em> for No.</p>
-  <h2>Yes, No or Skip</h2>
+  <p>Every time this page opens (and every 10 minutes while it stays open) it fetches live prices for the most active Polymarket Yes/No markets. For each one it looks for the same question on Kalshi, PredictIt and Manifold, averages what they say (real-money sites count more than play-money Manifold), and moves Polymarket's price only part of the way toward that average. The result is PolyLean's <b>chance</b> for Yes, and the chance for No is the rest.</p>
+  <h2>Chance, edge and actions</h2>
   <ul>
-    <li><b>Yes / No</b>: the adjusted probability beats the real price by at least 6 points after the spread.</li>
-    <li><b>Skip</b>: no matching question, sources agree with the market, the price is near 0% or 100%, volume is thin, or the market closes within an hour. Most markets are Skip, on purpose.</li>
-    <li>Questions only match when their numbers and years are identical, so "above $90k" is never compared with "above $100k".</li>
+    <li><b>Chance</b> is shown on every market: the chance it happens (Yes) and the chance it doesn't (No).</li>
+    <li><b>Minimum chance</b> (default 70%) is the least chance the side you would buy must have. Raising it removes actions; lowering it can only add them.</li>
+    <li><b>Action</b> means two things at once: the side has at least your minimum chance, and the price you would really pay (the ask for Yes, or 1 minus the bid for No) is at least 6 points below that chance.</li>
+    <li><b>High chance, no edge</b> lists markets that are very likely but already priced that way. Buying them wins a few cents and risks the whole stake, so the app says no trade.</li>
+    <li><b>Watch</b> means the model sees an edge, but on a side with less than your minimum chance.</li>
   </ul>
+  <h2>Why a high chance alone is not enough</h2>
+  <p>An 85% chance bought at 86¢ is a bad bet: you win 16¢ per $1 and lose the whole $1 about 15% of the time. A bet is only attractive when the chance is clearly above the price. That is why most high-chance markets say no trade.</p>
+  <h2>The stake size</h2>
+  <p>If you enter a bankroll, the stake is a quarter of the Kelly amount, capped at 5% of your bankroll per market. It assumes the model's chance is right, which it may not be, so treat it as a ceiling, not a target.</p>
   <h2>The scorecard is the product</h2>
-  <p>Prediction-market prices already hold most public information, so a lean is only a hypothesis. Each lean is saved when it first appears and scored when the market resolves. If the model's Brier score is not lower than the plain market's, the model adds nothing. Wait for about 30 resolved leans before reading anything into it.</p>
+  <p>Prediction-market prices already hold most public information, so every lean is only a hypothesis. Each lean is saved when it first appears and scored when the market resolves. If the model's Brier score is not lower than the plain market's, the model adds nothing. Wait for about 30 resolved leans before reading anything into it.</p>
   <h2>Limits</h2>
   <ul>
-    <li>The scorecard is stored in this browser on this device, and only grows while the page is open. Clearing browser data erases it. Use Download backup.</li>
-    <li>Only two outside sources. Many markets have no match.</li>
-    <li>Matching is word-based. Similar wording can hide different resolution rules, so read Polymarket's rules before trading.</li>
+    <li>The chance is PolyLean's estimate, not a fact. With no outside forecast it is just the market's own price.</li>
+    <li>The scorecard is stored in this browser on this device and only grows while the page is open. Use Download backup.</li>
+    <li>Only two outside sources. Similar wording can hide different resolution rules, so read Polymarket's rules before trading.</li>
     <li>It does not read blogs, news or social media.</li>
   </ul>
 </section>

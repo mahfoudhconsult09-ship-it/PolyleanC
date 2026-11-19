@@ -7,9 +7,9 @@
     MIN_EDGE: 0.06,          // gap needed after paying the spread before we lean
     MAX_SHRINK: 0.6,         // never move more than 60% of the way from market to sources
     MIN_PRICE: 0.03, MAX_PRICE: 0.97,
-    MIN_SIM: { kalshi: 0.5, manifold: 0.55 },
+    MIN_SIM: { kalshi: 0.5, manifold: 0.55, predictit: 0.55 },
     MIN_VOLUME_24H: 1000,
-    BASE_WEIGHT: { kalshi: 1.0, manifold: 0.5 }, // real money counts more than play money
+    BASE_WEIGHT: { kalshi: 1.0, predictit: 0.8, manifold: 0.5 }, // real money counts more than play money; PredictIt stakes are capped, so a bit less
   };
 
   const STOP = new Set(("will the a an of in on by to be is are for at or and as with from than this that it its " +
@@ -126,6 +126,22 @@
     };
   }
 
+  /** PredictIt: one market holds several contracts; each open contract is its own Yes/No question. */
+  function normalizePredictIt(m) {
+    const out = [];
+    for (const c of (m && m.contracts) || []) {
+      if (c.status && c.status !== "Open") continue;
+      const ask = num(c.bestBuyYesCost), bid = num(c.bestSellYesCost), last = num(c.lastTradePrice);
+      let p;
+      if (ask !== null && bid !== null && ask >= bid) p = (ask + bid) / 2; else if (last !== null && last > 0) p = last; else continue;
+      if (!(p > 0 && p < 1)) continue;
+      const single = !c.name || String(c.name).trim() === String(m.name || "").trim();
+      out.push({ kind: "predictit", title: single ? (m.name || "") : (m.name || "") + " " + c.name,
+        prob: p, url: m.url || "https://www.predictit.org", strength: ask !== null && bid !== null && ask - bid <= 0.03 ? 0.8 : 0.5 });
+    }
+    return out;
+  }
+
   // ---- model ----------------------------------------------------------------
   /** Reason to skip before even looking for sources ("" means worth a look). */
   function preCheck(pm, now = new Date()) {
@@ -137,19 +153,23 @@
     return "";
   }
 
-  function matchSources(pm, kalshiIdx, manifoldCands) {
+  function matchSources(pm, kalshiIdx, manifoldCands, predictitIdx = []) {
     const me = tokens(pm.question);
     const found = [];
     for (const c of kalshiIdx) {
       const s = similarity(me, c.tok || tokens(c.title));
       if (s >= SETTINGS.MIN_SIM.kalshi) found.push(Object.assign({}, c, { sim: Math.round(s * 100) / 100 }));
     }
+    for (const c of predictitIdx) {
+      const s = similarity(me, c.tok || tokens(c.title));
+      if (s >= SETTINGS.MIN_SIM.predictit) found.push(Object.assign({}, c, { sim: Math.round(s * 100) / 100 }));
+    }
     for (const c of manifoldCands) {
       const s = similarity(me, tokens(c.title));
       if (s >= SETTINGS.MIN_SIM.manifold) found.push(Object.assign({}, c, { sim: Math.round(s * 100) / 100 }));
     }
     let best = [];
-    for (const kind of ["kalshi", "manifold"]) {
+    for (const kind of ["kalshi", "predictit", "manifold"]) {
       best = best.concat(found.filter((c) => c.kind === kind).sort((a, b) => b.sim - a.sim).slice(0, 2));
     }
     return best.map(({ kind, title, url, prob, sim, strength }) => ({ kind, title, url, prob, sim, strength }));
@@ -183,7 +203,7 @@
     }
     const agreeing = src.filter((s) => (s.prob - pm.price) * dir > 0.02);
     const agree = agreeing.length;
-    const kalshiAgrees = agreeing.some((s) => s.kind === "kalshi");
+    const kalshiAgrees = agreeing.some((s) => s.kind === "kalshi" || s.kind === "predictit"); // a real-money source agrees
     let conf;
     if (edge >= 0.10 && agree === src.length && src.length >= 2 && kalshiAgrees) conf = "High";
     else if (edge >= 0.08 && agree >= Math.max(1, src.length - 1)) conf = "Medium";
@@ -241,8 +261,60 @@
     return st;
   }
 
-  const api = { SETTINGS, tokens, similarity, searchTerm, categorize, normalizePm, normalizeKalshi,
+  // ---- v2: chance, tiers and a concrete action plan --------------------------
+  const PLAN = { DEFAULT_THRESHOLD: 0.70, STAKE_CAP: 0.05, KELLY_FRACTION: 0.25 };
+
+  /** Chance (0-1) that the given side wins, by PolyLean's estimate. */
+  const sideChance = (rec, side) => (side === "Yes" ? rec.model_p : 1 - rec.model_p);
+
+  /** Price per share of buying a side right now (pay the ask for Yes; for No you pay 1 - bid). */
+  const costOf = (rec, side) => (side === "Yes" ? rec.ask : 1 - rec.bid);
+
+  /**
+   * Which list a market belongs in, for a minimum-chance threshold:
+   *  action    = the model leans a side AND that side's chance >= threshold
+   *  lowchance = the model leans a side, but its chance is below the threshold
+   *  likely    = no edge, but one side is >= threshold (already priced in: no trade)
+   *  skip      = everything else
+   */
+  function classify(rec, threshold = PLAN.DEFAULT_THRESHOLD) {
+    const yes = rec.model_p, no = 1 - rec.model_p;
+    if (rec.lean === "Yes" || rec.lean === "No") {
+      const chance = sideChance(rec, rec.lean);
+      return { tier: chance >= threshold ? "action" : "lowchance", side: rec.lean, chance };
+    }
+    const side = yes >= no ? "Yes" : "No";
+    const chance = Math.max(yes, no);
+    // "likely" needs at least one matching outside forecast; otherwise the chance is only the market's own price.
+    const usable = !preCheck(rec) && Array.isArray(rec.sources) && rec.sources.length > 0;
+    return { tier: usable && chance >= threshold ? "likely" : "skip", side, chance };
+  }
+
+  /** The concrete trade implied by a lean. Model output, not advice. */
+  function plan(rec, bankroll) {
+    const side = rec.lean;
+    const chance = sideChance(rec, side);
+    const cost = costOf(rec, side);
+    const maxPrice = Math.max(0, chance - SETTINGS.MIN_EDGE);   // above this the edge is gone
+    const kelly = Math.max(0, (chance - cost) / (1 - cost));
+    const stakePct = Math.min(PLAN.STAKE_CAP, PLAN.KELLY_FRACTION * kelly);
+    const stake = bankroll > 0 ? bankroll * stakePct : null;
+    return { side, chance, cost, maxPrice, winPerDollar: (1 - cost) / cost, stakePct, stake,
+      shares: stake ? stake / cost : null };
+  }
+
+  /** What buying the favoured side of a no-edge market would really mean. */
+  function priced(rec) {
+    const { side, chance } = classify(rec);
+    const cost = costOf(rec, side);
+    return { side, chance, cost, winPerDollar: (1 - cost) / cost, lossChance: 1 - chance };
+  }
+
+  /** Chance of the side that a ledger entry took, from what was recorded at the time. */
+  const entryChance = (e) => (e.lean === "Yes" ? e.model_p : 1 - e.model_p);
+
+  const api = { SETTINGS, PLAN, tokens, similarity, searchTerm, categorize, normalizePm, normalizeKalshi, normalizePredictIt,
     normalizeManifold, preCheck, matchSources, score, buyPrice, updateLedger, resolvedOutcome,
-    applyResolutions, entryReturn, computeStats };
+    applyResolutions, entryReturn, computeStats, sideChance, costOf, classify, plan, priced, entryChance };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.PolyLean = api;
 })(typeof window !== "undefined" ? window : globalThis);

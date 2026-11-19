@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PolyLean – Live Yes/No leans for prediction markets</title>
+<meta name="description" content="Live Polymarket odds compared with independent forecasts, with a Yes, No or Skip lean, its sources and its own scorecard.">
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#14181f;--mute:#5d6675;--line:#e3e6eb;--accent:#0b6b5c;
+--yes:#0b7a43;--yes-bg:#e1f4e9;--no:#b3261e;--no-bg:#fbe5e3;--skip:#5d6675;--skip-bg:#eceff3;--warn-bg:#fff2cc;--warn:#6b4e00}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--card:#171b22;--ink:#e8ebf0;--mute:#98a2b3;--line:#262c36;--accent:#3ec9ae;
+--yes:#5fd99a;--yes-bg:#12301f;--no:#ff8f86;--no-bg:#3a1714;--skip:#98a2b3;--skip-bg:#232932;--warn-bg:#3a2f0b;--warn:#f3d27a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+.wrap{max-width:860px;margin:0 auto;padding:0 16px 48px}
+header{padding:22px 0 6px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+h1{margin:0;font-size:1.5rem;letter-spacing:-.01em}h1 span{color:var(--accent)}
+.sub{margin:4px 0 0;color:var(--mute);font-size:.95rem}
+.live{display:flex;align-items:center;gap:8px;color:var(--mute);font-size:.85rem;margin:4px 0 8px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--yes);flex:none}
+#refresh{flex:none;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:10px;padding:8px 14px;font:inherit;font-size:.9rem;cursor:pointer}
+#refresh:disabled{opacity:.55;cursor:default}
+.banner{margin:10px 0;padding:10px 12px;border-radius:10px;background:var(--warn-bg);color:var(--warn);font-size:.92rem}
+.banner.err{background:var(--no-bg);color:var(--no)}
+nav{display:flex;gap:6px;margin:12px 0;border-bottom:1px solid var(--line)}
+nav button{background:none;border:0;border-bottom:3px solid transparent;padding:10px 12px;font:inherit;color:var(--mute);cursor:pointer}
+nav button[aria-selected=true]{color:var(--ink);border-color:var(--accent);font-weight:600}
+.filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.chip{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;padding:6px 12px;font:inherit;font-size:.88rem;cursor:pointer}
+.chip[aria-pressed=true]{background:var(--accent);color:#fff;border-color:var(--accent)}
+.meta{color:var(--mute);font-size:.85rem;margin:0 0 12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+.top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.q{margin:0;font-size:1.02rem;font-weight:600;line-height:1.35}
+a.plain{color:inherit;text-decoration:none}
+.badge{flex:none;border-radius:8px;padding:4px 10px;font-weight:700;font-size:.9rem}
+.badge.Yes{background:var(--yes-bg);color:var(--yes)}.badge.No{background:var(--no-bg);color:var(--no)}.badge.Skip{background:var(--skip-bg);color:var(--skip)}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0 4px}
+.stat b{display:block;font-size:1.1rem}.stat span{color:var(--mute);font-size:.78rem;text-transform:uppercase;letter-spacing:.04em}
+.why{margin:8px 0 0;color:var(--mute);font-size:.92rem}
+details{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+summary{cursor:pointer;color:var(--accent);font-size:.9rem}
+ul{margin:8px 0 0;padding-left:18px}li{margin:4px 0;font-size:.9rem}
+a{color:var(--accent)}.tag{font-size:.75rem;color:var(--mute)}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:12px}
+@media(min-width:640px){.grid{grid-template-columns:repeat(4,1fr)}}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+.tile b{display:block;font-size:1.3rem}.tile span{color:var(--mute);font-size:.8rem}
+table{width:100%;border-collapse:collapse;font-size:.9rem;margin-top:12px}
+th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+.good{color:var(--yes)}.bad{color:var(--no)}
+.how h2{font-size:1.05rem;margin:20px 0 6px}
+.disc{margin-top:28px;padding:12px;border:1px solid var(--line);border-radius:10px;color:var(--mute);font-size:.85rem}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div>
+    <h1>Poly<span>Lean</span></h1>
+    <p class="sub">Live Polymarket odds vs. independent forecasts. A Yes, No or Skip lean, with sources and your own scorecard.</p>
+  </div>
+  <button id="refresh" type="button">Refresh</button>
+</header>
+<div class="live"><span class="dot"></span><span id="asof">Loading live prices…</span><span id="progress"></span></div>
+<div id="error" class="banner err" hidden></div>
+<div id="status"></div>
+
+<nav role="tablist">
+  <button role="tab" aria-selected="true" data-tab="picks">Picks</button>
+  <button role="tab" aria-selected="false" data-tab="record">Scorecard</button>
+  <button role="tab" aria-selected="false" data-tab="how">How it works</button>
+</nav>
+
+<section id="picks"><div class="filters" id="filters"></div><p class="meta" id="meta"></p><div id="list"></div></section>
+<section id="record" hidden></section>
+
+<section id="how" class="how" hidden>
+  <h2>What this is</h2>
+  <p>Every time this page opens (and every 10 minutes while it stays open) it fetches live prices for the most active Polymarket Yes/No markets. For each one it looks for the same question on Kalshi and Manifold, averages what they say, and moves Polymarket's price only part of the way toward that average. It then compares the result with what you would really pay: the <em>ask</em> for Yes, or the <em>bid</em> for No.</p>
+  <h2>Yes, No or Skip</h2>
+  <ul>
+    <li><b>Yes / No</b>: the adjusted probability beats the real price by at least 6 points after the spread.</li>
+    <li><b>Skip</b>: no matching question, sources agree with the market, the price is near 0% or 100%, volume is thin, or the market closes within an hour. Most markets are Skip, on purpose.</li>
+    <li>Questions only match when their numbers and years are identical, so "above $90k" is never compared with "above $100k".</li>
+  </ul>
+  <h2>The scorecard is the product</h2>
+  <p>Prediction-market prices already hold most public information, so a lean is only a hypothesis. Each lean is saved when it first appears and scored when the market resolves. If the model's Brier score is not lower than the plain market's, the model adds nothing. Wait for about 30 resolved leans before reading anything into it.</p>
+  <h2>Limits</h2>
+  <ul>
+    <li>The scorecard is stored in this browser on this device, and only grows while the page is open. Clearing browser data erases it. Use Download backup.</li>
+    <li>Only two outside sources. Many markets have no match.</li>
+    <li>Matching is word-based. Similar wording can hide different resolution rules, so read Polymarket's rules before trading.</li>
+    <li>It does not read blogs, news or social media.</li>
+  </ul>
+</section>
+
+<div class="disc">Information only, not financial advice. Prediction markets carry a real risk of losing everything you stake, and rules differ by country. Check that it is allowed where you live before you trade.</div>
+</div>
+<script src="engine.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
